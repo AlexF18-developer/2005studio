@@ -1,27 +1,29 @@
 {
   "name": "2005studio",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "preview": "vite preview",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "test:server": "vite --config test/vite.e2e.config.js --mode e2e",
+    "test:e2e": "node test/e2e.mjs"
   },
   "dependencies": {
-    "lucide-react": "^1.46.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "firebase": "10.14.1",
+    "lucide-react": "0.460.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0",
+    "swiper": "11.1.14"
   },
   "devDependencies": {
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.7",
-    "@vitejs/plugin-react": "^6.1.1",
-    "gh-pages": "^6.3.0",
-    "oxlint": "^1.81.0",
-    "vite": "^8.3.0"
-  }
+    "@vitejs/plugin-react": "4.3.4",
+    "vite": "5.4.11",
+    "gh-pages": "6.3.0"
+  },
+  "homepage": "https://alexf18-developer.github.io/2005studio/"
 }
