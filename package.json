@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist",
+    "deploy": "gh-pages -d dist -r https://github.com/AlexF18-developer/2005studio.git",
     "test:server": "vite --config test/vite.e2e.config.js --mode e2e",
     "test:e2e": "node test/e2e.mjs"
   },
