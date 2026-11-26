@@ -1,0 +1,147 @@
+rules_version = '2';
+
+// =====================================================================
+//  2005 Studio · Reglas de seguridad de Firestore
+//  Publícalas en: Consola Firebase → Firestore Database → Reglas → Publicar
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function str(v, min, max) {
+      return v is string && v.size() >= min && v.size() <= max;
+    }
+
+    function optStr(v, max) {
+      return v == null || (v is string && v.size() <= max);
+    }
+
+    // ---------- Catálogo (lectura pública, escritura solo admin) ----------
+    match /categories/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /sizes/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /products/{id} {
+      // resource == null: permite consultar un id inexistente (la app muestra "no encontrado").
+      allow get: if resource == null || resource.data.active == true || isAdmin();
+      // El público debe consultar con where('active', '==', true).
+      allow list: if resource.data.active == true || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ---------- Usuarios ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'email', 'phone', 'createdAt'])
+        && str(request.resource.data.name, 2, 80)
+        && request.resource.data.email == request.auth.token.email
+        && optStr(request.resource.data.phone, 20)
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone'])
+        && str(request.resource.data.name, 2, 80)
+        && optStr(request.resource.data.phone, 20);
+      allow delete: if false;
+    }
+
+    // ---------- Administradores ----------
+    // El primer administrador se crea UNA sola vez desde /admin/setup (lote atómico admins + meta/setup).
+    // Después, solo un administrador puede agregar o quitar otros.
+    match /admins/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isAdmin()
+        || (signedIn()
+            && request.auth.uid == uid
+            && !exists(/databases/$(database)/documents/meta/setup)
+            && getAfter(/databases/$(database)/documents/meta/setup).data.adminUid == uid);
+      allow update: if false;
+      allow delete: if isAdmin() && uid != request.auth.uid;
+    }
+
+    match /meta/setup {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['adminUid', 'createdAt'])
+        && request.resource.data.adminUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/admins/$(request.auth.uid));
+      allow update, delete: if false;
+    }
+
+    // ---------- Pedidos ----------
+    // El id del documento es el código del pedido (aleatorio, no adivinable): quien lo tiene puede verlo.
+    match /orders/{code} {
+      allow get: if true;
+      allow list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if validNewOrder(code);
+      allow update: if isAdmin() || validPaymentReport();
+      allow delete: if isAdmin();
+    }
+
+    function validNewOrder(code) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['code', 'userId', 'customer', 'shipping', 'notes', 'items', 'itemsCount',
+                               'subtotalCents', 'totalCents', 'paymentMethod', 'operationNumber',
+                               'status', 'history', 'stockApplied', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['code', 'userId', 'customer', 'shipping', 'items', 'itemsCount',
+                            'subtotalCents', 'totalCents', 'paymentMethod', 'status', 'history',
+                            'stockApplied', 'createdAt', 'updatedAt'])
+        && d.code == code
+        && code.matches('^2005-[A-Z0-9]{8}$')
+        && (d.userId == null || (signedIn() && d.userId == request.auth.uid))
+        && d.customer.keys().hasOnly(['name', 'email', 'phone'])
+        && str(d.customer.name, 2, 100)
+        && str(d.customer.email, 5, 150)
+        && str(d.customer.phone, 9, 20)
+        && d.shipping.keys().hasOnly(['district', 'address', 'reference', 'costCents'])
+        && str(d.shipping.district, 2, 60)
+        && str(d.shipping.address, 5, 200)
+        && optStr(d.shipping.reference, 200)
+        && d.shipping.costCents is int && d.shipping.costCents >= 0
+        && optStr(d.get('notes', null), 500)
+        && d.items is list && d.items.size() >= 1 && d.items.size() <= 30
+        && d.itemsCount is int && d.itemsCount >= 1 && d.itemsCount <= 300
+        && d.subtotalCents is int && d.subtotalCents > 0
+        && d.totalCents is int
+        && d.totalCents == d.subtotalCents + d.shipping.costCents
+        && d.paymentMethod in ['yape', 'plin', 'transferencia', 'contraentrega']
+        && d.get('operationNumber', null) == null
+        && d.status == 'pendiente'
+        && d.stockApplied == false
+        && d.history is list && d.history.size() == 1
+        && d.createdAt == request.time
+        && d.updatedAt == request.time;
+    }
+
+    // El cliente (con el código del pedido) solo puede registrar su N° de operación una vez.
+    function validPaymentReport() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.status == 'pendiente'
+        && before.paymentMethod != 'contraentrega'
+        && after.diff(before).affectedKeys().hasOnly(['operationNumber', 'status', 'history', 'updatedAt'])
+        && after.status == 'verificando'
+        && str(after.operationNumber, 4, 30)
+        && after.history is list
+        && after.history.size() == before.history.size() + 1
+        && after.updatedAt == request.time;
+    }
+  }
+}
